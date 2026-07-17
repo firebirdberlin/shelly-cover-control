@@ -69,3 +69,7 @@ This extension is free and open-source software. If you find it useful and would
 * **Empty Dropdown Menu:** Ensure your computer and your Shelly are on the same local subnet. Wait a few seconds and click "Refresh Device List".
 * **Menu says "Err" or "Off":** The selected device may have lost Wi-Fi connection or changed IPs. Refresh the device list to update the mDNS cache.
 * **Can't see the extension:** Double-check that the folder name exactly matches `shelly-cover-control@firebirdberlin` inside `~/.local/share/gnome-shell/extensions/`.
+
+## ⚖️ License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.

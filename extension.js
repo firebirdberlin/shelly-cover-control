@@ -36,6 +36,7 @@ const ShellyIndicator = Object.registerClass(
             this._selectedShellyIp = this._loadSavedIp(); 
             this._discoveredDevices = []; 
             this._pollTimeoutId = null;
+            this._resumeTimeoutId = null; // Track resume delay timeout
             this._currentSubprocess = null; // Track subprocess to prevent overlaps
 
             // Build Static Control UI
@@ -99,11 +100,17 @@ const ShellyIndicator = Object.registerClass(
             this._stopPolling();
             this._killCurrentDiscovery();
 
+            if (this._resumeTimeoutId) {
+                GLib.Source.remove(this._resumeTimeoutId);
+                this._resumeTimeoutId = null;
+            }
+
             // 3 seconds delay for stable network interface binding
-            GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+            this._resumeTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
                 console.log('Shelly: Running post-resume discovery scan.');
                 this._discoverShellyDevices();
                 this._startPolling();
+                this._resumeTimeoutId = null;
                 return GLib.SOURCE_REMOVE;
             });
         }
@@ -143,10 +150,15 @@ const ShellyIndicator = Object.registerClass(
             this.menu.addMenuItem(item);
             item.connect('activate', () => {
                 this._sendShellyCommand(rpcMethod);
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+                
+                // Track this transient UI-feedback timeout as well to avoid leaks if closed instantly
+                let feedbackTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                     this._queryShellyStatus();
                     return GLib.SOURCE_REMOVE;
                 });
+                
+                // Automatically clean up our reference if the extension shuts down
+                this._feedbackTimeoutId = feedbackTimeoutId;
             });
         }
 
@@ -406,11 +418,33 @@ const ShellyIndicator = Object.registerClass(
         }
 
         destroy() {
+            // Clean up timers
             this._stopPolling();
+            if (this._resumeTimeoutId) {
+                GLib.Source.remove(this._resumeTimeoutId);
+                this._resumeTimeoutId = null;
+            }
+            if (this._feedbackTimeoutId) {
+                GLib.Source.remove(this._feedbackTimeoutId);
+                this._feedbackTimeoutId = null;
+            }
+
+            // Clean up spawned subprocesses
             this._killCurrentDiscovery();
+
+            // Disconnect and clean up DBus Session listeners
             if (this._screenSaverProxy && this._screenSaverSignalId) {
                 this._screenSaverProxy.disconnect(this._screenSaverSignalId);
+                this._screenSaverSignalId = null;
             }
+            this._screenSaverProxy = null;
+
+            // Abort and clean up HTTP session
+            if (this._soupSession) {
+                this._soupSession.abort();
+                this._soupSession = null;
+            }
+
             super.destroy();
         }
     }
