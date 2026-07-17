@@ -15,7 +15,7 @@ const ShellyIndicator = Object.registerClass(
         _init(extensionPath) {
             super._init(0.0, 'Shelly Cover Control');
             
-            this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json').get_path();
+            this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json');
 
             // 1. Single container layout
             this._container = new St.BoxLayout({
@@ -44,7 +44,7 @@ const ShellyIndicator = Object.registerClass(
 
             // Connection & Subprocess states
             this._soupSession = new Soup.Session();
-            this._selectedShellyIp = this._loadSavedIp(); 
+            this._selectedShellyIp = null; // Will load asynchronously
             this._discoveredDevices = []; 
             
             // Trackers to guarantee memory-leak prevention (GJS audit compliance)
@@ -78,9 +78,8 @@ const ShellyIndicator = Object.registerClass(
             // Monitor system sleep/wake
             this._setupSleepMonitor();
 
-            // Trigger initial discovery and start status updates
-            this._discoverShellyDevices();
-            this._startPolling();
+            // Load saved settings asynchronously, then trigger scans
+            this._loadSavedIpAsync();
         }
 
         /**
@@ -99,7 +98,6 @@ const ShellyIndicator = Object.registerClass(
                 if (active) {
                     let isLocked = active.get_boolean();
                     if (!isLocked) {
-                        console.log('Shelly: Desktop Unlocked / Resumed. Waiting for network...');
                         this._handleResumeRecover();
                     } else {
                         // Suspend active intervals and processes immediately upon sleep/lock
@@ -121,7 +119,6 @@ const ShellyIndicator = Object.registerClass(
 
             // 3 seconds delay to allow interfaces to reconnect
             this._resumeTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
-                console.log('Shelly: Running post-resume discovery scan.');
                 this._discoverShellyDevices();
                 this._startPolling();
                 this._resumeTimeoutId = null;
@@ -129,27 +126,49 @@ const ShellyIndicator = Object.registerClass(
             });
         }
 
-        _loadSavedIp() {
-            try {
-                let [ok, contents] = GLib.file_get_contents(this._stateFile);
-                if (ok) {
-                    const decoder = new TextDecoder('utf-8');
-                    const data = JSON.parse(decoder.decode(contents));
-                    return data.savedIp || null;
+        /**
+         * Asynchronously loads the saved IP from disk (EGO-X-004 compliance)
+         */
+        _loadSavedIpAsync() {
+            this._stateFile.load_contents_async(null, (file, res) => {
+                try {
+                    let [success, contents] = file.load_contents_finish(res);
+                    if (success) {
+                        const decoder = new TextDecoder('utf-8');
+                        const data = JSON.parse(decoder.decode(contents));
+                        this._selectedShellyIp = data.savedIp || null;
+                    }
+                } catch (e) {
+                    // File may not exist yet on first launch; gracefully continue
+                } finally {
+                    // Initialize system tasks after file I/O finishes
+                    this._discoverShellyDevices();
+                    this._startPolling();
                 }
-            } catch (e) {
-                console.log('Shelly: No saved state found.');
-            }
-            return null;
+            });
         }
 
-        _saveSelectedIp(ip) {
-            try {
-                const data = JSON.stringify({ savedIp: ip }, null, '\t');
-                GLib.file_set_contents(this._stateFile, data);
-            } catch (error) {
-                console.error(`Shelly: Failed to save state file: ${error.message}`);
-            }
+        /**
+         * Asynchronously saves the selected IP to disk (EGO-X-004 compliance)
+         */
+        _saveSelectedIpAsync(ip) {
+            const data = JSON.stringify({ savedIp: ip }, null, '\t');
+            const bytes = new GLib.Bytes(data);
+            
+            this._stateFile.replace_contents_bytes_async(
+                bytes,
+                null,
+                false,
+                Gio.FileCreateFlags.NONE,
+                null,
+                (file, res) => {
+                    try {
+                        file.replace_contents_finish(res);
+                    } catch (error) {
+                        console.error(`Shelly: Failed to save state file: ${error.message}`);
+                    }
+                }
+            );
         }
 
         _createControlUI() {
@@ -279,12 +298,10 @@ const ShellyIndicator = Object.registerClass(
                                         this._discoveredDevices.push({ name: displayName, ip });
                                         this._updateDeviceMenu();
                                     }
-                                } else {
-                                    console.log(`Shelly: Skipping ${deviceInfo.id} (${ip}) because it is not in cover mode.`);
                                 }
                             }
                         } catch (error) {
-                            console.log(`Shelly: Could not verify features for device at ${ip}`);
+                            // Suppressed transient verification errors to adhere to EGO-A-004 guidelines
                         }
                     }
                 );
@@ -306,7 +323,7 @@ const ShellyIndicator = Object.registerClass(
 
                 if (!this._selectedShellyIp) {
                     this._selectedShellyIp = this._discoveredDevices[0].ip;
-                    this._saveSelectedIp(this._selectedShellyIp);
+                    this._saveSelectedIpAsync(this._selectedShellyIp);
                     this._queryShellyStatus();
                 }
 
@@ -318,7 +335,7 @@ const ShellyIndicator = Object.registerClass(
 
                     item.connect('activate', () => {
                         this._selectedShellyIp = device.ip;
-                        this._saveSelectedIp(device.ip); 
+                        this._saveSelectedIpAsync(device.ip); 
                         Main.notify('Shelly Connected', `Targeting: ${device.name}`);
                         this._updateDeviceMenu();
                         this._queryShellyStatus();
