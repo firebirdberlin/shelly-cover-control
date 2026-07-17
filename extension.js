@@ -22,9 +22,20 @@ const ShellyIndicator = Object.registerClass(
                 style_class: 'panel-status-menu-box',
             });
 
-            // 2. Single label for emoji and status
+            // 2. Load the colorful custom rainbow SVG icon
+            const iconFile = Gio.File.new_for_path(extensionPath).get_child('shelly-cover.svg');
+            const gicon = Gio.Icon.new_for_string(iconFile.get_path());
+
+            this._statusIcon = new St.Icon({
+                gicon: gicon,
+                style_class: 'system-status-icon',
+                icon_size: 16 // Ensures strict panel proportions
+            });
+            this._container.add_child(this._statusIcon);
+
+            // 3. Single label for dynamic status readings
             this._statusLabel = new St.Label({
-                text: '🪟 --',
+                text: ' --',
                 y_align: Clutter.ActorAlign.CENTER,
                 style_class: 'panel-button-text'
             });
@@ -35,9 +46,12 @@ const ShellyIndicator = Object.registerClass(
             this._soupSession = new Soup.Session();
             this._selectedShellyIp = this._loadSavedIp(); 
             this._discoveredDevices = []; 
+            
+            // Trackers to guarantee memory-leak prevention (GJS audit compliance)
             this._pollTimeoutId = null;
-            this._resumeTimeoutId = null; // Track resume delay timeout
-            this._currentSubprocess = null; // Track subprocess to prevent overlaps
+            this._resumeTimeoutId = null;
+            this._feedbackTimeoutId = null;
+            this._currentSubprocess = null;
 
             // Build Static Control UI
             this._createControlUI();
@@ -88,7 +102,7 @@ const ShellyIndicator = Object.registerClass(
                         console.log('Shelly: Desktop Unlocked / Resumed. Waiting for network...');
                         this._handleResumeRecover();
                     } else {
-                        // Suspend active intervals and processes
+                        // Suspend active intervals and processes immediately upon sleep/lock
                         this._stopPolling();
                         this._killCurrentDiscovery();
                     }
@@ -105,7 +119,7 @@ const ShellyIndicator = Object.registerClass(
                 this._resumeTimeoutId = null;
             }
 
-            // 3 seconds delay for stable network interface binding
+            // 3 seconds delay to allow interfaces to reconnect
             this._resumeTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
                 console.log('Shelly: Running post-resume discovery scan.');
                 this._discoverShellyDevices();
@@ -151,14 +165,16 @@ const ShellyIndicator = Object.registerClass(
             item.connect('activate', () => {
                 this._sendShellyCommand(rpcMethod);
                 
-                // Track this transient UI-feedback timeout as well to avoid leaks if closed instantly
-                let feedbackTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+                // Track transition UI feedback timeout safely
+                if (this._feedbackTimeoutId) {
+                    GLib.Source.remove(this._feedbackTimeoutId);
+                }
+                
+                this._feedbackTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                     this._queryShellyStatus();
+                    this._feedbackTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
-                
-                // Automatically clean up our reference if the extension shuts down
-                this._feedbackTimeoutId = feedbackTimeoutId;
             });
         }
 
@@ -196,7 +212,7 @@ const ShellyIndicator = Object.registerClass(
                             this._parseAvahiOutput(stdout);
                         }
                     } catch (e) {
-                        // Suppressed manually triggered force_exit() error logs
+                        // Suppress manually triggered exit code error messages
                     } finally {
                         this._currentSubprocess = null;
                     }
@@ -276,7 +292,7 @@ const ShellyIndicator = Object.registerClass(
         }
 
         /**
-         * Updates drop down device roster. Guaranteed to always house 
+         * Updates dropdown device roster. Guaranteed to always house 
          * at least one item, preventing sub-menu system locking.
          */
         _updateDeviceMenu() {
@@ -357,7 +373,7 @@ const ShellyIndicator = Object.registerClass(
 
         _queryShellyStatus() {
             if (!this._selectedShellyIp) {
-                this._statusLabel.set_text('🪟 --');
+                this._statusLabel.set_text(' --');
                 return;
             }
 
@@ -377,10 +393,10 @@ const ShellyIndicator = Object.registerClass(
                             const status = JSON.parse(responseText);
                             this._updateStatusLabel(status);
                         } else {
-                            this._statusLabel.set_text('🪟 Err');
+                            this._statusLabel.set_text(' Err');
                         }
                     } catch (error) {
-                        this._statusLabel.set_text('🪟 Off');
+                        this._statusLabel.set_text(' Off');
                     }
                 }
             );
@@ -391,17 +407,17 @@ const ShellyIndicator = Object.registerClass(
             const pos = status.current_pos;
 
             if (state === 'opening') {
-                this._statusLabel.set_text('🪟 ▲');
+                this._statusLabel.set_text(' ▲');
             } else if (state === 'closing') {
-                this._statusLabel.set_text('🪟 ▼');
+                this._statusLabel.set_text(' ▼');
             } else if (typeof pos === 'number') {
-                this._statusLabel.set_text(`🪟 ${pos}%`);
+                this._statusLabel.set_text(` ${pos}%`);
             } else if (state === 'open') {
-                this._statusLabel.set_text('🪟 100%');
+                this._statusLabel.set_text(' 100%');
             } else if (state === 'closed') {
-                this._statusLabel.set_text('🪟 0%');
+                this._statusLabel.set_text(' 0%');
             } else {
-                this._statusLabel.set_text('🪟 --');
+                this._statusLabel.set_text(' --');
             }
         }
 
@@ -418,7 +434,7 @@ const ShellyIndicator = Object.registerClass(
         }
 
         destroy() {
-            // Clean up timers
+            // Clean up timers to prevent memory leaks
             this._stopPolling();
             if (this._resumeTimeoutId) {
                 GLib.Source.remove(this._resumeTimeoutId);
@@ -439,7 +455,7 @@ const ShellyIndicator = Object.registerClass(
             }
             this._screenSaverProxy = null;
 
-            // Abort and clean up HTTP session
+            // Abort and clean up HTTP sessions
             if (this._soupSession) {
                 this._soupSession.abort();
                 this._soupSession = null;
