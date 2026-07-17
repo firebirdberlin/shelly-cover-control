@@ -47,6 +47,19 @@ const ShellyIndicator = Object.registerClass(
             this.menu.addMenuItem(discoveryHeader);
             this._deviceSubMenu = discoveryHeader.menu;
 
+            // Add the Coffee Donation Link at the absolute bottom of the main menu
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            const donateItem = new PopupMenu.PopupMenuItem('☕ Buy me a coffee');
+            this.menu.addMenuItem(donateItem);
+            donateItem.connect('activate', () => {
+                const url = 'https://www.buymeacoffee.com/firebirdberlin';
+                try {
+                    Gio.AppInfo.launch_default_for_uri(url, null);
+                } catch (error) {
+                    console.error(`Failed to open donation link: ${error.message}`);
+                }
+            });
+
             // Monitor system sleep/wake
             this._setupSleepMonitor();
 
@@ -59,7 +72,6 @@ const ShellyIndicator = Object.registerClass(
          * Tracks Linux DBus session changes (Sleep, Wake up, Lock)
          */
         _setupSleepMonitor() {
-            // Monitor standard screen/session lock & sleep signals
             this._screenSaverProxy = new Gio.DBusProxy({
                 g_connection: Gio.DBus.session,
                 g_name: 'org.gnome.ScreenSaver',
@@ -67,7 +79,6 @@ const ShellyIndicator = Object.registerClass(
                 g_interface_name: 'org.gnome.ScreenSaver'
             });
 
-            // Signal listener for wake/lock
             this._screenSaverSignalId = this._screenSaverProxy.connect('g-properties-changed', (proxy, changedProperties) => {
                 let active = changedProperties.lookup_value('Active', null);
                 if (active) {
@@ -76,7 +87,7 @@ const ShellyIndicator = Object.registerClass(
                         console.log('Shelly: Desktop Unlocked / Resumed. Waiting for network...');
                         this._handleResumeRecover();
                     } else {
-                        // Desktop is locked / going to sleep. Suspend calls.
+                        // Suspend active intervals and processes
                         this._stopPolling();
                         this._killCurrentDiscovery();
                     }
@@ -85,11 +96,10 @@ const ShellyIndicator = Object.registerClass(
         }
 
         _handleResumeRecover() {
-            // Stop any dangling tasks
             this._stopPolling();
             this._killCurrentDiscovery();
 
-            // Wait 3 seconds to let network card establish a stable Wi-Fi/Ethernet IP, then scan
+            // 3 seconds delay for stable network interface binding
             GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
                 console.log('Shelly: Running post-resume discovery scan.');
                 this._discoverShellyDevices();
@@ -117,7 +127,7 @@ const ShellyIndicator = Object.registerClass(
                 const data = JSON.stringify({ savedIp: ip }, null, '\t');
                 GLib.file_set_contents(this._stateFile, data);
             } catch (error) {
-                logError(error, 'Shelly: Failed to save state file');
+                console.error(`Shelly: Failed to save state file: ${error.message}`);
             }
         }
 
@@ -151,25 +161,21 @@ const ShellyIndicator = Object.registerClass(
 
         /**
          * Runs an active 2.5-second scan to catch slower Wi-Fi/UDP mDNS responses.
-         * Removing the '-t' flag allows us to listen continuously for incoming broadcasts.
          */
         _discoverShellyDevices() {
-            this._killCurrentDiscovery(); // Clean up any active scans
+            this._killCurrentDiscovery();
 
-            // We drop '-t' so the command stays open and listens
             const cmd = ['avahi-browse', '-rp', '_http._tcp'];
 
             try {
                 this._currentSubprocess = Gio.Subprocess.new(cmd, Gio.SubprocessFlags.STDOUT_PIPE);
 
-                // Set a 2.5-second timer to cleanly close the scan
                 const scanTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2500, () => {
                     this._killCurrentDiscovery();
                     return GLib.SOURCE_REMOVE;
                 });
 
                 this._currentSubprocess.communicate_utf8_async(null, null, (proc, res) => {
-                    // Cancel our timeout guard if the process somehow exited on its own
                     GLib.Source.remove(scanTimeoutId);
 
                     try {
@@ -178,19 +184,19 @@ const ShellyIndicator = Object.registerClass(
                             this._parseAvahiOutput(stdout);
                         }
                     } catch (e) {
-                        // Suppress errors caused by our manual force_exit() kill
+                        // Suppressed manually triggered force_exit() error logs
                     } finally {
                         this._currentSubprocess = null;
                     }
                 });
             } catch (e) {
-                logError(e, 'Failed to launch avahi-browse');
+                console.error(`Failed to launch avahi-browse: ${e.message}`);
             }
         }
 
         /**
-         * Parses semicolon-separated output and queries each Shelly's HTTP API.
-         * Explicitly filters to include only devices in 'cover' profile mode.
+         * Parses output and targets Shelly HTTP metadata.
+         * Filters to include only devices explicitly set to 'cover' profile.
          */
         _parseAvahiOutput(stdout) {
             const lines = stdout.split('\n');
@@ -233,15 +239,11 @@ const ShellyIndicator = Object.registerClass(
                                 const responseText = decoder.decode(responseBytes.get_data());
                                 const deviceInfo = JSON.parse(responseText);
 
-                                // --- COVER FILTER LOGIC ---
-                                // 1. Multi-profile devices (like 2PM) explicitly announce their profile mode
+                                // COVER FILTER LOGIC
                                 const isCoverProfile = deviceInfo.profile === 'cover';
-
-                                // 2. Alternatively, catch dedicated cover devices or filter out single-relays (like Plus1PM)
                                 const appName = deviceInfo.app || '';
                                 const isCompatibleHardware = appName.includes('2PM') || appName.toLowerCase().includes('cover');
 
-                                // Only add if it's explicitly set to cover mode or is matching hardware
                                 if (isCoverProfile || (isCompatibleHardware && deviceInfo.profile !== 'switch')) {
                                     const displayName = deviceInfo.name || deviceInfo.id;
 
@@ -252,11 +254,8 @@ const ShellyIndicator = Object.registerClass(
                                 } else {
                                     console.log(`Shelly: Skipping ${deviceInfo.id} (${ip}) because it is not in cover mode.`);
                                 }
-                                // --------------------------
                             }
                         } catch (error) {
-                            // If a device fails to reply entirely, we can gracefully skip it
-                            // to keep the list clean from non-functional or legacy devices
                             console.log(`Shelly: Could not verify features for device at ${ip}`);
                         }
                     }
@@ -264,55 +263,61 @@ const ShellyIndicator = Object.registerClass(
             });
         }
 
+        /**
+         * Updates drop down device roster. Guaranteed to always house 
+         * at least one item, preventing sub-menu system locking.
+         */
         _updateDeviceMenu() {
             this._deviceSubMenu.removeAll();
 
-            if (this._discoveredDevices.length === 0) {
-                const noDevicesItem = new PopupMenu.PopupMenuItem('No Shellys found. Rescan?');
-                this._deviceSubMenu.addMenuItem(noDevicesItem);
-                noDevicesItem.connect('activate', () => this._discoverShellyDevices());
-                return;
-            }
+            // 1. Populate actual found Shellys
+            if (this._discoveredDevices.length > 0) {
+                this._discoveredDevices.sort((a, b) => {
+                    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+                });
 
-            this._discoveredDevices.sort((a, b) => {
-                return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
-            });
-
-            if (!this._selectedShellyIp && this._discoveredDevices.length > 0) {
-                this._selectedShellyIp = this._discoveredDevices[0].ip;
-                this._saveSelectedIp(this._selectedShellyIp);
-                this._queryShellyStatus();
-            }
-
-            this._discoveredDevices.forEach(device => {
-                const isSelected = device.ip === this._selectedShellyIp;
-                const label = isSelected ? `● ${device.name} (${device.ip})` : `○ ${device.name}`;
-                const item = new PopupMenu.PopupMenuItem(label);
-                this._deviceSubMenu.addMenuItem(item);
-
-                item.connect('activate', () => {
-                    this._selectedShellyIp = device.ip;
-                    this._saveSelectedIp(device.ip); 
-                    Main.notify('Shelly Connected', `Targeting: ${device.name}`);
-                    this._updateDeviceMenu();
+                if (!this._selectedShellyIp) {
+                    this._selectedShellyIp = this._discoveredDevices[0].ip;
+                    this._saveSelectedIp(this._selectedShellyIp);
                     this._queryShellyStatus();
-                });
-            });
+                }
 
-            if (this._selectedShellyIp) {
-                this._deviceSubMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                const openWebUiItem = new PopupMenu.PopupMenuItem('🌐 Open Web Interface');
-                this._deviceSubMenu.addMenuItem(openWebUiItem);
-                openWebUiItem.connect('activate', () => {
-                    const url = `http://${this._selectedShellyIp}/`;
-                    try {
-                        Gio.AppInfo.launch_default_for_uri(url, null);
-                    } catch (error) {
-                        logError(error, `Failed to open Web UI for ${this._selectedShellyIp}`);
-                    }
+                this._discoveredDevices.forEach(device => {
+                    const isSelected = device.ip === this._selectedShellyIp;
+                    const label = isSelected ? `● ${device.name} (${device.ip})` : `○ ${device.name}`;
+                    const item = new PopupMenu.PopupMenuItem(label);
+                    this._deviceSubMenu.addMenuItem(item);
+
+                    item.connect('activate', () => {
+                        this._selectedShellyIp = device.ip;
+                        this._saveSelectedIp(device.ip); 
+                        Main.notify('Shelly Connected', `Targeting: ${device.name}`);
+                        this._updateDeviceMenu();
+                        this._queryShellyStatus();
+                    });
                 });
+
+                if (this._selectedShellyIp) {
+                    this._deviceSubMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                    const openWebUiItem = new PopupMenu.PopupMenuItem('🌐 Open Web Interface');
+                    this._deviceSubMenu.addMenuItem(openWebUiItem);
+                    openWebUiItem.connect('activate', () => {
+                        const url = `http://${this._selectedShellyIp}/`;
+                        try {
+                            Gio.AppInfo.launch_default_for_uri(url, null);
+                        } catch (error) {
+                            console.error(`Failed to open Web UI for ${this._selectedShellyIp}: ${error.message}`);
+                        }
+                    });
+                }
+            } else {
+                // FALLBACK: Non-functional placeholder keeps menu selectable
+                const noDevicesItem = new PopupMenu.PopupMenuItem('No Shellys found yet');
+                noDevicesItem.sensitive = false; 
+                this._deviceSubMenu.addMenuItem(noDevicesItem);
             }
 
+            // 2. ALWAYS appended refresh action prevents zero-element menu lockups
             this._deviceSubMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             const refreshItem = new PopupMenu.PopupMenuItem('🔄 Refresh Device List');
             this._deviceSubMenu.addMenuItem(refreshItem);
@@ -320,7 +325,7 @@ const ShellyIndicator = Object.registerClass(
         }
 
         _startPolling() {
-            this._stopPolling(); // Ensure timers are cleared first
+            this._stopPolling();
             this._pollTimeoutId = GLib.timeout_add_seconds(
                 GLib.PRIORITY_DEFAULT, 
                 5, 
@@ -340,7 +345,7 @@ const ShellyIndicator = Object.registerClass(
 
         _queryShellyStatus() {
             if (!this._selectedShellyIp) {
-                this._statusLabel.set_text(' 🪟 --');
+                this._statusLabel.set_text('🪟 --');
                 return;
             }
 
@@ -360,10 +365,10 @@ const ShellyIndicator = Object.registerClass(
                             const status = JSON.parse(responseText);
                             this._updateStatusLabel(status);
                         } else {
-                            this._statusLabel.set_text(' 🪟 Err');
+                            this._statusLabel.set_text('🪟 Err');
                         }
                     } catch (error) {
-                        this._statusLabel.set_text(' 🪟 Off');
+                        this._statusLabel.set_text('🪟 Off');
                     }
                 }
             );
