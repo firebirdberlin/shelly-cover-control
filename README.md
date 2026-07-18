@@ -22,28 +22,42 @@ It operates entirely locally over your network using the Shelly HTTP RPC API and
 This extension relies on standard Linux Avahi tools for local network mDNS discovery. You must have this package installed on your system:
 
 **Ubuntu / Debian / Linux Mint:**
-    sudo apt install avahi-utils
+```bash
+sudo apt install avahi-utils
+```
 
 **Fedora:**
-    sudo dnf install avahi-tools
+```bash
+sudo dnf install avahi-tools
+```
 
 **Arch Linux:**
-    sudo pacman -S avahi
+```bash
+sudo pacman -S avahi
+```
 
 ## 📦 Installation (Manual)
 
 1. Clone this repository to your preferred location (e.g., a dedicated projects directory):
-    git clone git@github.com:firebirdberlin/shelly-cover-control.git ~/Projects/shelly-cover-control
+   ```bash
+   git clone git@github.com:firebirdberlin/shelly-cover-control.git ~/Projects/shelly-cover-control
+   ```
 
 2. Create a symbolic link pointing from your GNOME Shell extensions directory to the cloned repository:
-    ln -s ~/Projects/shelly-cover-control ~/.local/share/gnome-shell/extensions/shelly-cover-control@firebirdberlin
+   ```bash
+   ln -s ~/Projects/shelly-cover-control ~/.local/share/gnome-shell/extensions/shelly-cover-control@firebirdberlin
+   ```
+
+   > ⚠️ **Important (Wayland users):** GNOME Shell only scans for new extension directories during startup. If you are running Wayland (default on modern Ubuntu), you **must log out of your desktop session and log back in now**, otherwise the next step will fail with an error stating the extension does not exist.
 
 3. Enable the extension using the GNOME CLI:
-    gnome-extensions enable shelly-cover-control@firebirdberlin
+   ```bash
+   gnome-extensions enable shelly-cover-control@firebirdberlin
+   ```
 
-4. **Restart GNOME Shell** so it registers the new extension:
+4. **Restart GNOME Shell** to finalize the activation:
    * **X11:** Press `Alt + F2`, type `r`, and press `Enter`.
-   * **Wayland:** Log out of your desktop session and log back in.
+   * **Wayland:** (Already taken care of in step 2, but required again if the extension ever needs a hard reload after code changes).
 
 ## ⚙️ Compatibility
 
