@@ -1,0 +1,41 @@
+/* Shelly Cover Control — panel dropdown styling
+ * GNOME Shell auto-loads this file from the extension root, no import needed.
+ */
+
+.shelly-control-row {
+    spacing: 6px;
+    padding: 4px 6px;
+}
+
+.shelly-control-name {
+    font-weight: bold;
+    padding-right: 6px;
+}
+
+.shelly-control-btn {
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    font-size: 11pt;
+    min-width: 24px;
+    min-height: 24px;
+}
+
+.shelly-control-btn:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Native press feedback (mouse held down) */
+.shelly-control-btn:active {
+    background-color: rgba(53, 132, 228, 0.45);
+    border-color: rgba(53, 132, 228, 0.8);
+    color: #ffffff;
+}
+
+.shelly-control-percent {
+    font-weight: bold;
+    padding-left: 6px;
+    min-width: 34px;
+}

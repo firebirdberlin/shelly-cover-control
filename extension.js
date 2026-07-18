@@ -172,29 +172,72 @@ const ShellyIndicator = Object.registerClass(
         }
 
         _createControlUI() {
-            this._createMenuItem('Open Cover', 'Cover.Open');
-            this._createMenuItem('Close Cover', 'Cover.Close');
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            this._createMenuItem('Stop Movement', 'Cover.Stop');
+            // Non-reactive wrapper so clicking the row itself doesn't close the
+            // menu; the buttons inside remain individually clickable.
+            const item = new PopupMenu.PopupBaseMenuItem({
+                reactive: false,
+                can_focus: false,
+            });
+
+            const row = new St.BoxLayout({
+                style_class: 'shelly-control-row',
+                x_expand: true,
+                vertical: false,
+            });
+
+            this._rowNameLabel = new St.Label({
+                text: 'Cover',
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: true,
+                style_class: 'shelly-control-name',
+            });
+            row.add_child(this._rowNameLabel);
+
+            this._openBtn = this._createControlButton('\u25B2', 'Cover.Open');   // ▲
+            this._closeBtn = this._createControlButton('\u25BC', 'Cover.Close'); // ▼
+            this._stopBtn = this._createControlButton('\u25A0', 'Cover.Stop');   // ■
+
+            row.add_child(this._openBtn);
+            row.add_child(this._closeBtn);
+            row.add_child(this._stopBtn);
+
+            this._rowPercentLabel = new St.Label({
+                text: '--',
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'shelly-control-percent',
+            });
+            row.add_child(this._rowPercentLabel);
+
+            item.add_child(row);
+            this.menu.addMenuItem(item);
         }
 
-        _createMenuItem(label, rpcMethod) {
-            const item = new PopupMenu.PopupMenuItem(label);
-            this.menu.addMenuItem(item);
-            item.connect('activate', () => {
+        _createControlButton(glyph, rpcMethod) {
+            const button = new St.Button({
+                label: glyph,
+                style_class: 'shelly-control-btn',
+                style: 'padding: 4px 10px; margin: 0 2px;',
+                can_focus: true,
+                reactive: true,
+                track_hover: true,
+            });
+
+            button.connect('clicked', () => {
                 this._sendShellyCommand(rpcMethod);
-                
+
                 // Track transition UI feedback timeout safely
                 if (this._feedbackTimeoutId) {
                     GLib.Source.remove(this._feedbackTimeoutId);
                 }
-                
+
                 this._feedbackTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                     this._queryShellyStatus();
                     this._feedbackTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
             });
+
+            return button;
         }
 
         _killCurrentDiscovery() {
@@ -324,11 +367,17 @@ const ShellyIndicator = Object.registerClass(
                 if (!this._selectedShellyIp) {
                     this._selectedShellyIp = this._discoveredDevices[0].ip;
                     this._saveSelectedIpAsync(this._selectedShellyIp);
+                    if (this._rowNameLabel) {
+                        this._rowNameLabel.set_text(this._discoveredDevices[0].name);
+                    }
                     this._queryShellyStatus();
                 }
 
                 this._discoveredDevices.forEach(device => {
                     const isSelected = device.ip === this._selectedShellyIp;
+                    if (isSelected && this._rowNameLabel) {
+                        this._rowNameLabel.set_text(device.name);
+                    }
                     const label = isSelected ? `● ${device.name} (${device.ip})` : `○ ${device.name}`;
                     const item = new PopupMenu.PopupMenuItem(label);
                     this._deviceSubMenu.addMenuItem(item);
@@ -337,6 +386,9 @@ const ShellyIndicator = Object.registerClass(
                         this._selectedShellyIp = device.ip;
                         this._saveSelectedIpAsync(device.ip); 
                         Main.notify('Shelly Connected', `Targeting: ${device.name}`);
+                        if (this._rowNameLabel) {
+                            this._rowNameLabel.set_text(device.name);
+                        }
                         this._updateDeviceMenu();
                         this._queryShellyStatus();
                     });
@@ -391,6 +443,7 @@ const ShellyIndicator = Object.registerClass(
         _queryShellyStatus() {
             if (!this._selectedShellyIp) {
                 this._statusLabel.set_text(' --');
+                this._updateControlRow(null, null);
                 return;
             }
 
@@ -411,9 +464,11 @@ const ShellyIndicator = Object.registerClass(
                             this._updateStatusLabel(status);
                         } else {
                             this._statusLabel.set_text(' Err');
+                            if (this._rowPercentLabel) this._rowPercentLabel.set_text('Err');
                         }
                     } catch (error) {
                         this._statusLabel.set_text(' Off');
+                        if (this._rowPercentLabel) this._rowPercentLabel.set_text('Off');
                     }
                 }
             );
@@ -435,6 +490,33 @@ const ShellyIndicator = Object.registerClass(
                 this._statusLabel.set_text(' 0%');
             } else {
                 this._statusLabel.set_text(' --');
+            }
+
+            this._updateControlRow(state, pos);
+        }
+
+        /**
+         * Syncs the percentage readout and active-direction highlight on the
+         * [▲] [▼] [■] control row inside the dropdown menu.
+         */
+        _updateControlRow(state, pos) {
+            if (this._rowPercentLabel) {
+                if (typeof pos === 'number') {
+                    this._rowPercentLabel.set_text(`${pos}%`);
+                } else if (state === 'open') {
+                    this._rowPercentLabel.set_text('100%');
+                } else if (state === 'closed') {
+                    this._rowPercentLabel.set_text('0%');
+                } else {
+                    this._rowPercentLabel.set_text('--');
+                }
+            }
+
+            if (this._openBtn) {
+                this._openBtn.style_pseudo_class = state === 'opening' ? 'active' : '';
+            }
+            if (this._closeBtn) {
+                this._closeBtn.style_pseudo_class = state === 'closing' ? 'active' : '';
             }
         }
 
