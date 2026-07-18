@@ -22,33 +22,26 @@ It operates entirely locally over your network using the Shelly HTTP RPC API and
 This extension relies on standard Linux Avahi tools for local network mDNS discovery. You must have this package installed on your system:
 
 **Ubuntu / Debian / Linux Mint:**
-```bash
-sudo apt install avahi-utils
-```
+    sudo apt install avahi-utils
 
 **Fedora:**
-```bash
-sudo dnf install avahi-tools
-```
+    sudo dnf install avahi-tools
 
 **Arch Linux:**
-```bash
-sudo pacman -S avahi
-```
+    sudo pacman -S avahi
 
 ## 📦 Installation (Manual)
 
-1. Clone this repository directly into your GNOME Shell extensions directory:
-   ```bash
-   git clone git@github.com:firebirdberlin/shelly-cover-control.git ~/.local/share/gnome-shell/extensions/shelly-cover-control@firebirdberlin
-   ```
+1. Clone this repository to your preferred location (e.g., a dedicated projects directory):
+    git clone git@github.com:firebirdberlin/shelly-cover-control.git ~/Projects/shelly-cover-control
 
-2. Enable the extension using the GNOME CLI:
-   ```bash
-   gnome-extensions enable shelly-cover-control@firebirdberlin
-   ```
+2. Create a symbolic link pointing from your GNOME Shell extensions directory to the cloned repository:
+    ln -s ~/Projects/shelly-cover-control ~/.local/share/gnome-shell/extensions/shelly-cover-control@firebirdberlin
 
-3. **Restart GNOME Shell** so it registers the new extension:
+3. Enable the extension using the GNOME CLI:
+    gnome-extensions enable shelly-cover-control@firebirdberlin
+
+4. **Restart GNOME Shell** so it registers the new extension:
    * **X11:** Press `Alt + F2`, type `r`, and press `Enter`.
    * **Wayland:** Log out of your desktop session and log back in.
 
@@ -68,7 +61,7 @@ This extension is free and open-source software. If you find it useful and would
 
 * **Empty Dropdown Menu:** Ensure your computer and your Shelly are on the same local subnet. Wait a few seconds and click "Refresh Device List".
 * **Menu says "Err" or "Off":** The selected device may have lost Wi-Fi connection or changed IPs. Refresh the device list to update the mDNS cache.
-* **Can't see the extension:** Double-check that the folder name exactly matches `shelly-cover-control@firebirdberlin` inside `~/.local/share/gnome-shell/extensions/`.
+* **Can't see the extension:** Double-check that your symlink inside `~/.local/share/gnome-shell/extensions/` is named exactly `shelly-cover-control@firebirdberlin` and points to the correct project folder.
 
 ## ⚖️ License
 
