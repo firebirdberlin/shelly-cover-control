@@ -50,3 +50,33 @@
     color: #ffffff;
 }
 
+/* About dialog */
+.shelly-about-dialog {
+    min-width: 360px;
+}
+
+.shelly-about-content {
+    spacing: 10px;
+    padding: 12px 6px 4px 6px;
+}
+
+.shelly-about-title {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.shelly-about-version {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.shelly-about-link {
+    color: #62a0ea;
+    padding: 2px 0;
+}
+
+.shelly-about-link:hover {
+    color: #8ec0f2;
+}
+
+

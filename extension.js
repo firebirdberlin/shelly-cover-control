@@ -9,12 +9,14 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 
 const ShellyIndicator = Object.registerClass(
     class ShellyIndicator extends PanelMenu.Button {
-        _init(extensionPath) {
+        _init(extensionPath, metadata) {
             super._init(0.0, 'Shelly Cover Control');
             
+            this._metadata = metadata || {};
             this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json');
 
             // 1. Single container layout
@@ -75,11 +77,94 @@ const ShellyIndicator = Object.registerClass(
                 }
             });
 
+            // About — always the last item in the menu
+            const aboutItem = new PopupMenu.PopupMenuItem('ℹ️ About');
+            this.menu.addMenuItem(aboutItem);
+            aboutItem.connect('activate', () => this._showAboutDialog());
+
             // Monitor system sleep/wake
             this._setupSleepMonitor();
 
             // Load saved settings asynchronously, then trigger scans
             this._loadSavedIpAsync();
+        }
+
+        /**
+         * Shows a small modal dialog with the extension's name, version,
+         * GitHub page, and donation link.
+         */
+        _showAboutDialog() {
+            const name = this._metadata.name || 'Shelly Cover Control';
+            const version = this._metadata.version ?? this._metadata['version-name'] ?? 'unknown';
+            const githubUrl = 'https://github.com/firebirdberlin/shelly-cover-control';
+            const donateUrl = 'https://www.buymeacoffee.com/firebirdberlin';
+
+            const dialog = new ModalDialog.ModalDialog({
+                styleClass: 'shelly-about-dialog',
+                destroyOnClose: true,
+            });
+
+            const content = new St.BoxLayout({
+                vertical: true,
+                style_class: 'shelly-about-content',
+            });
+
+            content.add_child(new St.Label({
+                text: name,
+                style_class: 'shelly-about-title',
+            }));
+
+            content.add_child(new St.Label({
+                text: `Version ${version}`,
+                style_class: 'shelly-about-version',
+            }));
+
+            const githubButton = new St.Button({
+                label: '🔗 github.com/firebirdberlin/shelly-cover-control',
+                style_class: 'shelly-about-link',
+                x_align: Clutter.ActorAlign.START,
+                can_focus: true,
+                reactive: true,
+                track_hover: true,
+            });
+            githubButton.connect('clicked', () => {
+                try {
+                    Gio.AppInfo.launch_default_for_uri(githubUrl, null);
+                } catch (error) {
+                    console.error(`Failed to open GitHub page: ${error.message}`);
+                }
+            });
+            content.add_child(githubButton);
+
+            const donateButton = new St.Button({
+                label: '☕ Buy me a coffee',
+                style_class: 'shelly-about-link',
+                x_align: Clutter.ActorAlign.START,
+                can_focus: true,
+                reactive: true,
+                track_hover: true,
+            });
+            donateButton.connect('clicked', () => {
+                try {
+                    Gio.AppInfo.launch_default_for_uri(donateUrl, null);
+                } catch (error) {
+                    console.error(`Failed to open donation link: ${error.message}`);
+                }
+            });
+            content.add_child(donateButton);
+
+            dialog.contentLayout.add_child(content);
+
+            dialog.setButtons([
+                {
+                    label: 'Close',
+                    action: () => dialog.close(),
+                    key: Clutter.KEY_Escape,
+                    default: true,
+                },
+            ]);
+
+            dialog.open();
         }
 
         /**
@@ -589,7 +674,7 @@ const ShellyIndicator = Object.registerClass(
 
 export default class ShellyCoverExtension extends Extension {
     enable() {
-        this._indicator = new ShellyIndicator(this.path);
+        this._indicator = new ShellyIndicator(this.path, this.metadata);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
     }
 

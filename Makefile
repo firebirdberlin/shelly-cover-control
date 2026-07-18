@@ -41,3 +41,7 @@ release: bump
 clean:
 	@echo "Cleaning up uncommitted files in $(DIST_DIR)..."
 	git clean -f $(DIST_DIR)
+
+test:
+	dbus-run-session gnome-shell --nested --wayland
+
