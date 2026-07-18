@@ -1,22 +1,30 @@
 /* Shelly Cover Control — panel dropdown styling
  * GNOME Shell auto-loads this file from the extension root, no import needed.
+ *
+ * Note: the control row's wrapper item is created with reactive:false (so
+ * clicking the row background doesn't close the menu). GNOME Shell tags
+ * non-reactive PopupBaseMenuItems as "inactive" and dims their text color
+ * by default. The rules below set an explicit color on every element in
+ * the row so that inherited dimming never applies.
  */
 
 .shelly-control-row {
     spacing: 6px;
     padding: 4px 6px;
+    color: #ffffff;
 }
 
 .shelly-control-name {
     font-weight: bold;
     padding-right: 6px;
+    color: #ffffff;
 }
 
 .shelly-control-btn {
     border-radius: 4px;
     border: 1px solid rgba(255, 255, 255, 0.15);
     background-color: rgba(255, 255, 255, 0.06);
-    color: inherit;
+    color: #ffffff;
     font-size: 11pt;
     min-width: 24px;
     min-height: 24px;
@@ -25,6 +33,7 @@
 .shelly-control-btn:hover {
     background-color: rgba(255, 255, 255, 0.14);
     border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
 }
 
 /* Native press feedback (mouse held down) */
@@ -38,4 +47,6 @@
     font-weight: bold;
     padding-left: 6px;
     min-width: 34px;
+    color: #ffffff;
 }
+

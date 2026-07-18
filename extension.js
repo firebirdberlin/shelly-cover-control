@@ -208,8 +208,39 @@ const ShellyIndicator = Object.registerClass(
             });
             row.add_child(this._rowPercentLabel);
 
+            this._webUiBtn = new St.Button({
+                label: '\u{1F310}', // 🌐
+                style_class: 'shelly-control-btn',
+                style: 'padding: 4px 8px; margin: 0 0 0 4px;',
+                can_focus: false,
+                reactive: false,
+                track_hover: true,
+            });
+            this._webUiBtn.opacity = 120; // starts disabled until a device is selected
+            this._webUiBtn.connect('clicked', () => {
+                if (!this._selectedShellyIp) return;
+                const url = `http://${this._selectedShellyIp}/`;
+                try {
+                    Gio.AppInfo.launch_default_for_uri(url, null);
+                } catch (error) {
+                    console.error(`Failed to open Web UI for ${this._selectedShellyIp}: ${error.message}`);
+                }
+            });
+            row.add_child(this._webUiBtn);
+
             item.add_child(row);
             this.menu.addMenuItem(item);
+        }
+
+        /**
+         * Enables/disables and visually dims the 🌐 web-interface button
+         * based on whether a Shelly device is currently selected.
+         */
+        _setWebUiButtonSensitive(sensitive) {
+            if (!this._webUiBtn) return;
+            this._webUiBtn.reactive = sensitive;
+            this._webUiBtn.can_focus = sensitive;
+            this._webUiBtn.opacity = sensitive ? 255 : 120;
         }
 
         _createControlButton(glyph, rpcMethod) {
@@ -395,23 +426,14 @@ const ShellyIndicator = Object.registerClass(
                 });
 
                 if (this._selectedShellyIp) {
-                    this._deviceSubMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                    const openWebUiItem = new PopupMenu.PopupMenuItem('🌐 Open Web Interface');
-                    this._deviceSubMenu.addMenuItem(openWebUiItem);
-                    openWebUiItem.connect('activate', () => {
-                        const url = `http://${this._selectedShellyIp}/`;
-                        try {
-                            Gio.AppInfo.launch_default_for_uri(url, null);
-                        } catch (error) {
-                            console.error(`Failed to open Web UI for ${this._selectedShellyIp}: ${error.message}`);
-                        }
-                    });
+                    this._setWebUiButtonSensitive(true);
                 }
             } else {
                 // FALLBACK: Non-functional placeholder keeps menu selectable
                 const noDevicesItem = new PopupMenu.PopupMenuItem('No Shellys found yet');
                 noDevicesItem.sensitive = false; 
                 this._deviceSubMenu.addMenuItem(noDevicesItem);
+                this._setWebUiButtonSensitive(false);
             }
 
             // 2. ALWAYS appended refresh action prevents zero-element menu lockups
