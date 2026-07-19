@@ -10,11 +10,13 @@ It operates entirely locally over your network using the Shelly HTTP RPC API and
 
 * **Real-Time Status:** Shows the exact position of your cover right in the top bar (e.g., `🪟 45%`).
 * **Live Movement Indicators:** Displays directional arrows (`▲` / `▼`) while your blinds or shutters are actively moving.
+* **One-Row Controls:** The dropdown's top row puts everything at your fingertips: `Name [▲] [▼] [■] 40% [🌐]` — open, close, stop, live percentage, and a quick web-UI shortcut, all without closing the menu between clicks.
 * **Zero-Config Discovery:** Automatically finds Shelly devices on your local Wi-Fi/LAN using mDNS.
 * **Smart Filtering:** Extracts your custom Shelly device names (e.g., *"Wohnzimmer Rolladen"*) and ignores Shelly relays configured as standard light switches.
 * **Persistent Memory:** Remembers your selected device across system reboots.
 * **Sleep Aware:** Safely pauses background network polling when your Linux machine goes to sleep and auto-heals connections when waking up.
-* **Quick Web Access:** One-click shortcut to open the active device's local web configuration page in your default browser.
+* **Quick Web Access:** One-click 🌐 shortcut (right in the control row) to open the active device's local web configuration page in your default browser.
+* **About Dialog:** An "ℹ️ About" entry at the bottom of the menu shows the extension's name, version, GitHub page, and donation links.
 
 
 ## 🛠 Prerequisites
@@ -61,7 +63,7 @@ sudo pacman -S avahi
 
 ## ⚙️ Compatibility
 
-* **GNOME Shell:** 45, 46, 47, 48 (ESM imports)
+* **GNOME Shell:** 45, 46, 47, 48, 49, 50 (ESM imports)
 * **Shelly Devices:** Any Gen2/Gen3 Shelly device supporting the `Cover` RPC profile (e.g., Shelly Plus 2PM, Shelly Pro 2PM, Shelly 2PM Gen3). *Note: The device must be calibrated in the Shelly app for percentage readouts to work.*
 
 ## 💚 Open Source & Donations
@@ -74,6 +76,7 @@ This extension is free and open-source software. If you find it useful and would
 ## 🐛 Troubleshooting
 
 * **Empty Dropdown Menu:** Ensure your computer and your Shelly are on the same local subnet. Wait a few seconds and click "Refresh Device List".
+* **"⚠️ avahi-browse unavailable" in the menu:** The extension couldn't run `avahi-browse` — almost always because it isn't installed (see [Prerequisites](#-prerequisites) above). Install the package for your distro, then click "🔄 Refresh Device List" inside the "Select Shelly Device" submenu; the warning clears automatically once discovery succeeds, no restart needed.
 * **Menu says "Err" or "Off":** The selected device may have lost Wi-Fi connection or changed IPs. Refresh the device list to update the mDNS cache.
 * **Can't see the extension:** Double-check that your symlink inside `~/.local/share/gnome-shell/extensions/` is named exactly `shelly-cover-control@firebirdberlin` and points to the correct project folder.
 

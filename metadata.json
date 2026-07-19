@@ -3,7 +3,7 @@
     "github": "firebirdberlin", 
     "buymeacoffee": "firebirdberlin"
   }, 
-  "name": "Shelly Cover Controller", 
+  "name": "Shelly Cover Control", 
   "description": "Control your Shelly 2PM cover directly from the top panel.", 
   "url": "https://github.com/firebirdberlin/shelly-cover-control", 
   "uuid": "shelly-cover-control@firebirdberlin", 
