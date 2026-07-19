@@ -18,6 +18,7 @@ const ShellyIndicator = Object.registerClass(
             
             this._metadata = metadata || {};
             this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json');
+            this._avahiAvailable = true;
 
             // 1. Single container layout
             this._container = new St.BoxLayout({
@@ -57,6 +58,22 @@ const ShellyIndicator = Object.registerClass(
 
             // Build Static Control UI
             this._createControlUI();
+
+            // Avahi status warning — lives in the MAIN menu (not the device
+            // submenu), hidden unless avahi-browse can't be run. Created with
+            // reactive:true (default) so GNOME Shell doesn't auto-apply its
+            // "popup-inactive-menu-item" dimming class, then made
+            // non-interactive by assigning reactive/can_focus afterward — the
+            // label additionally gets an explicit white color rule (see
+            // stylesheet.css) so it can never inherit a dimmed color.
+            this._avahiWarningItem = new PopupMenu.PopupMenuItem(
+                '⚠️ avahi-browse unavailable — install avahi-utils / avahi-tools / avahi'
+            );
+            this._avahiWarningItem.reactive = false;
+            this._avahiWarningItem.can_focus = false;
+            this._avahiWarningItem.visible = false;
+            this._avahiWarningItem.label.add_style_class_name('shelly-avahi-warning-label');
+            this.menu.addMenuItem(this._avahiWarningItem);
 
             // Build Dynamic Discovery UI
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -376,6 +393,15 @@ const ShellyIndicator = Object.registerClass(
             try {
                 this._currentSubprocess = Gio.Subprocess.new(cmd, Gio.SubprocessFlags.STDOUT_PIPE);
 
+                // Spawn succeeded, so the binary exists — clear any prior "missing" state.
+                if (!this._avahiAvailable) {
+                    this._avahiAvailable = true;
+                    if (this._avahiWarningItem) {
+                        this._avahiWarningItem.visible = false;
+                    }
+                    this._updateDeviceMenu();
+                }
+
                 const scanTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2500, () => {
                     this._killCurrentDiscovery();
                     return GLib.SOURCE_REMOVE;
@@ -397,7 +423,26 @@ const ShellyIndicator = Object.registerClass(
                 });
             } catch (e) {
                 console.error(`Failed to launch avahi-browse: ${e.message}`);
+                this._handleAvahiMissing(e);
             }
+        }
+
+        /**
+         * Called when avahi-browse can't be spawned at all (most likely it
+         * isn't installed, occasionally a permissions issue). Any failure to
+         * spawn this specific, fixed argv is realistically one of those two
+         * causes. Shows a persistent warning in the main menu instead of
+         * silently falling back to a generic "no devices found" state.
+         */
+        _handleAvahiMissing(error) {
+            this._avahiAvailable = false;
+            this._discoveredDevices = [];
+
+            if (this._avahiWarningItem) {
+                this._avahiWarningItem.visible = true;
+            }
+
+            this._updateDeviceMenu();
         }
 
         /**
@@ -474,8 +519,10 @@ const ShellyIndicator = Object.registerClass(
         _updateDeviceMenu() {
             this._deviceSubMenu.removeAll();
 
-            // 1. Populate actual found Shellys
-            if (this._discoveredDevices.length > 0) {
+            if (!this._avahiAvailable) {
+                this._setWebUiButtonSensitive(false);
+            } else if (this._discoveredDevices.length > 0) {
+                // 1. Populate actual found Shellys
                 this._discoveredDevices.sort((a, b) => {
                     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
                 });
