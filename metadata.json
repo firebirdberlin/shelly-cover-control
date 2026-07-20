@@ -1,19 +1,19 @@
 {
-  "version": 7, 
-  "url": "https://github.com/firebirdberlin/shelly-cover-control", 
-  "description": "Control your Shelly 2PM cover directly from the top panel.", 
-  "name": "Shelly Cover Control", 
+  "version": 8,
+  "url": "https://github.com/firebirdberlin/shelly-cover-control",
+  "description": "Control your Shelly 2PM cover directly from the top panel.",
+  "name": "Shelly Cover Control",
   "donations": {
-    "buymeacoffee": "firebirdberlin", 
+    "buymeacoffee": "firebirdberlin",
     "github": "firebirdberlin"
-  }, 
-  "uuid": "shelly-cover-control@firebirdberlin", 
+  },
+  "uuid": "shelly-cover-control@firebirdberlin",
   "shell-version": [
-    "45", 
-    "46", 
-    "47", 
-    "48", 
-    "49", 
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
     "50"
   ]
 }
