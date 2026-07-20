@@ -15,9 +15,12 @@ const ShellyIndicator = Object.registerClass(
     class ShellyIndicator extends PanelMenu.Button {
         _init(extensionPath, metadata) {
             super._init(0.0, 'Shelly Cover Control');
-            
+
             this._metadata = metadata || {};
             this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json');
+            this._logFile = Gio.File.new_for_path(
+                GLib.build_filenamev([GLib.get_user_cache_dir(), 'shelly-cover-control', 'error.log'])
+            );
             this._networkAvailable = true;
 
             // 1. Single container layout
@@ -59,8 +62,8 @@ const ShellyIndicator = Object.registerClass(
             this._subnetScanActive = false;
 
             this._selectedShellyIp = null; // Will load asynchronously
-            this._discoveredDevices = []; 
-            
+            this._discoveredDevices = [];
+
             // Trackers to guarantee memory-leak prevention (GJS audit compliance)
             this._pollTimeoutId = null;
             this._resumeTimeoutId = null;
@@ -100,7 +103,7 @@ const ShellyIndicator = Object.registerClass(
                 try {
                     Gio.AppInfo.launch_default_for_uri(url, null);
                 } catch (error) {
-                    console.error(`Failed to open donation link: ${error.message}`);
+                    this._logError(`Failed to open donation link: ${error.message}`);
                 }
             });
 
@@ -114,6 +117,86 @@ const ShellyIndicator = Object.registerClass(
 
             // Load saved settings asynchronously, then trigger scans
             this._loadSavedIpAsync();
+        }
+
+        /**
+         * Appends a timestamped line to this._logFile instead of using
+         * console.error(), which makes GNOME Shell flag the extension with
+         * an "errors" warning banner even for routine, already-handled
+         * failures (a rejected donation-link launch, a dropped HTTP probe,
+         * etc). Best-effort: if writing the log itself fails, there's
+         * nowhere safe left to report that, so it's silently dropped rather
+         * than risk re-triggering the very warning this exists to avoid.
+         */
+        _logError(message) {
+            const line = `[${new Date().toISOString()}] ${message}\n`;
+            let stream = null;
+
+            try {
+                const parent = this._logFile.get_parent();
+                if (parent && !parent.query_exists(null)) {
+                    parent.make_directory_with_parents(null);
+                }
+
+                this._truncateLogIfStale();
+
+                stream = this._logFile.append_to(Gio.FileCreateFlags.NONE, null);
+                stream.write_bytes(new GLib.Bytes(line), null);
+            } catch (e) {
+                // Nothing more we can safely do here.
+            } finally {
+                if (stream) {
+                    try {
+                        stream.close(null);
+                    } catch (e) {
+                        // already closed / never fully opened
+                    }
+                }
+            }
+        }
+
+        /**
+         * Keeps the log from growing forever: reads only the first line
+         * (cheap even once the file is large), and if that entry is more
+         * than ~30 days old, clears the whole file before the new line is
+         * appended. Every entry is prefixed with an ISO timestamp
+         * (`[2026-07-20T12:00:00.000Z] ...`), which is what this checks
+         * against — no separate marker file needed.
+         */
+        _truncateLogIfStale() {
+            if (!this._logFile.query_exists(null)) return;
+
+            let inputStream = null;
+            let dataStream = null;
+
+            try {
+                inputStream = this._logFile.read(null);
+                dataStream = Gio.DataInputStream.new(inputStream);
+
+                const result = dataStream.read_line_utf8(null);
+                const firstLine = Array.isArray(result) ? result[0] : result;
+                if (!firstLine) return;
+
+                const match = firstLine.match(/^\[([^\]]+)\]/);
+                if (!match) return;
+
+                const firstTimestamp = new Date(match[1]);
+                if (isNaN(firstTimestamp.getTime())) return;
+
+                const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+                if (Date.now() - firstTimestamp.getTime() > THIRTY_DAYS_MS) {
+                    this._logFile.replace_contents('', null, false, Gio.FileCreateFlags.NONE, null);
+                }
+            } catch (e) {
+                // If we can't read/parse the log, leave it alone rather than
+                // risk losing entries over a transient I/O hiccup.
+            } finally {
+                if (dataStream) {
+                    try { dataStream.close(null); } catch (e) {}
+                } else if (inputStream) {
+                    try { inputStream.close(null); } catch (e) {}
+                }
+            }
         }
 
         /**
@@ -158,7 +241,7 @@ const ShellyIndicator = Object.registerClass(
                 try {
                     Gio.AppInfo.launch_default_for_uri(githubUrl, null);
                 } catch (error) {
-                    console.error(`Failed to open GitHub page: ${error.message}`);
+                    this._logError(`Failed to open GitHub page: ${error.message}`);
                 }
             });
             content.add_child(githubButton);
@@ -175,10 +258,31 @@ const ShellyIndicator = Object.registerClass(
                 try {
                     Gio.AppInfo.launch_default_for_uri(donateUrl, null);
                 } catch (error) {
-                    console.error(`Failed to open donation link: ${error.message}`);
+                    this._logError(`Failed to open donation link: ${error.message}`);
                 }
             });
             content.add_child(donateButton);
+
+            const logButton = new St.Button({
+                label: '📄 View Error Log',
+                style_class: 'shelly-about-link',
+                x_align: Clutter.ActorAlign.START,
+                can_focus: true,
+                reactive: true,
+                track_hover: true,
+            });
+            logButton.connect('clicked', () => {
+                try {
+                    if (this._logFile.query_exists(null)) {
+                        Gio.AppInfo.launch_default_for_uri(this._logFile.get_uri(), null);
+                    } else {
+                        Main.notify('Shelly Cover Control', 'No errors logged yet.');
+                    }
+                } catch (error) {
+                    // Nothing useful we can do if even opening the log fails.
+                }
+            });
+            content.add_child(logButton);
 
             dialog.contentLayout.add_child(content);
 
@@ -266,7 +370,7 @@ const ShellyIndicator = Object.registerClass(
         _saveSelectedIpAsync(ip) {
             const data = JSON.stringify({ savedIp: ip }, null, '\t');
             const bytes = new GLib.Bytes(data);
-            
+
             this._stateFile.replace_contents_bytes_async(
                 bytes,
                 null,
@@ -277,7 +381,7 @@ const ShellyIndicator = Object.registerClass(
                     try {
                         file.replace_contents_finish(res);
                     } catch (error) {
-                        console.error(`Shelly: Failed to save state file: ${error.message}`);
+                        this._logError(`Shelly: Failed to save state file: ${error.message}`);
                     }
                 }
             );
@@ -335,7 +439,7 @@ const ShellyIndicator = Object.registerClass(
                 try {
                     Gio.AppInfo.launch_default_for_uri(url, null);
                 } catch (error) {
-                    console.error(`Failed to open Web UI for ${this._selectedShellyIp}: ${error.message}`);
+                    this._logError(`Failed to open Web UI for ${this._selectedShellyIp}: ${error.message}`);
                 }
             });
             row.add_child(this._webUiBtn);
@@ -570,7 +674,7 @@ const ShellyIndicator = Object.registerClass(
         }
 
         /**
-         * Updates dropdown device roster. Guaranteed to always house 
+         * Updates dropdown device roster. Guaranteed to always house
          * at least one item, preventing sub-menu system locking.
          */
         _updateDeviceMenu() {
@@ -612,7 +716,7 @@ const ShellyIndicator = Object.registerClass(
 
                     item.connect('activate', () => {
                         this._selectedShellyIp = device.ip;
-                        this._saveSelectedIpAsync(device.ip); 
+                        this._saveSelectedIpAsync(device.ip);
                         Main.notify('Shelly Connected', `Targeting: ${device.name}`);
                         if (this._rowNameLabel) {
                             this._rowNameLabel.set_text(device.name);
@@ -628,7 +732,7 @@ const ShellyIndicator = Object.registerClass(
             } else {
                 // FALLBACK: Non-functional placeholder keeps menu selectable
                 const noDevicesItem = new PopupMenu.PopupMenuItem('No Shellys found yet');
-                noDevicesItem.sensitive = false; 
+                noDevicesItem.sensitive = false;
                 this._deviceSubMenu.addMenuItem(noDevicesItem);
                 this._setWebUiButtonSensitive(false);
             }
@@ -643,11 +747,11 @@ const ShellyIndicator = Object.registerClass(
         _startPolling() {
             this._stopPolling();
             this._pollTimeoutId = GLib.timeout_add_seconds(
-                GLib.PRIORITY_DEFAULT, 
-                5, 
+                GLib.PRIORITY_DEFAULT,
+                5,
                 () => {
                     this._queryShellyStatus();
-                    return GLib.SOURCE_CONTINUE; 
+                    return GLib.SOURCE_CONTINUE;
                 }
             );
         }
