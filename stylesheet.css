@@ -79,12 +79,4 @@
     color: #8ec0f2;
 }
 
-/* Avahi-missing warning in the main menu — explicit color so it never
-   inherits GNOME Shell's dimmed "insensitive" text color. */
-.shelly-avahi-warning-label {
-    color: #ffffff;
-    font-weight: 600;
-}
-
-
 

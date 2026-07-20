@@ -18,7 +18,7 @@ const ShellyIndicator = Object.registerClass(
             
             this._metadata = metadata || {};
             this._stateFile = Gio.File.new_for_path(extensionPath).get_child('state.json');
-            this._avahiAvailable = true;
+            this._networkAvailable = true;
 
             // 1. Single container layout
             this._container = new St.BoxLayout({
@@ -45,8 +45,19 @@ const ShellyIndicator = Object.registerClass(
             this._container.add_child(this._statusLabel);
             this.add_child(this._container);
 
-            // Connection & Subprocess states
+            // HTTP sessions
             this._soupSession = new Soup.Session();
+
+            // Dedicated session for full-subnet sweeps: raised max_conns so
+            // ~250 simultaneous probes aren't serialized behind libsoup's
+            // default cap of 10, and it's aborted separately from
+            // _soupSession so a sweep in flight can't block status polling.
+            this._scanSoupSession = new Soup.Session({
+                max_conns: 128,
+                max_conns_per_host: 128,
+            });
+            this._subnetScanActive = false;
+
             this._selectedShellyIp = null; // Will load asynchronously
             this._discoveredDevices = []; 
             
@@ -54,26 +65,25 @@ const ShellyIndicator = Object.registerClass(
             this._pollTimeoutId = null;
             this._resumeTimeoutId = null;
             this._feedbackTimeoutId = null;
-            this._currentSubprocess = null;
 
             // Build Static Control UI
             this._createControlUI();
 
-            // Avahi status warning — lives in the MAIN menu (not the device
-            // submenu), hidden unless avahi-browse can't be run. Created with
-            // reactive:true (default) so GNOME Shell doesn't auto-apply its
-            // "popup-inactive-menu-item" dimming class, then made
-            // non-interactive by assigning reactive/can_focus afterward — the
-            // label additionally gets an explicit white color rule (see
-            // stylesheet.css) so it can never inherit a dimmed color.
-            this._avahiWarningItem = new PopupMenu.PopupMenuItem(
-                '⚠️ avahi-browse unavailable — install avahi-utils / avahi-tools / avahi'
+            // Network status warning — lives in the MAIN menu (not the device
+            // submenu), hidden unless no local network route can be found.
+            // Created with reactive:true (default) so GNOME Shell doesn't
+            // auto-apply its "popup-inactive-menu-item" dimming class, then
+            // made non-interactive by assigning reactive/can_focus afterward
+            // — the label additionally gets an explicit white color rule
+            // (see stylesheet.css) so it can never inherit a dimmed color.
+            this._networkWarningItem = new PopupMenu.PopupMenuItem(
+                '⚠️ No local network connection found'
             );
-            this._avahiWarningItem.reactive = false;
-            this._avahiWarningItem.can_focus = false;
-            this._avahiWarningItem.visible = false;
-            this._avahiWarningItem.label.add_style_class_name('shelly-avahi-warning-label');
-            this.menu.addMenuItem(this._avahiWarningItem);
+            this._networkWarningItem.reactive = false;
+            this._networkWarningItem.can_focus = false;
+            this._networkWarningItem.visible = false;
+            this._networkWarningItem.label.add_style_class_name('shelly-menu-info-label');
+            this.menu.addMenuItem(this._networkWarningItem);
 
             // Build Dynamic Discovery UI
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -204,7 +214,7 @@ const ShellyIndicator = Object.registerClass(
                     } else {
                         // Suspend active intervals and processes immediately upon sleep/lock
                         this._stopPolling();
-                        this._killCurrentDiscovery();
+                        this._abortDiscovery();
                     }
                 }
             });
@@ -212,7 +222,7 @@ const ShellyIndicator = Object.registerClass(
 
         _handleResumeRecover() {
             this._stopPolling();
-            this._killCurrentDiscovery();
+            this._abortDiscovery();
 
             if (this._resumeTimeoutId) {
                 GLib.Source.remove(this._resumeTimeoutId);
@@ -373,143 +383,190 @@ const ShellyIndicator = Object.registerClass(
             return button;
         }
 
-        _killCurrentDiscovery() {
-            if (this._currentSubprocess) {
-                try {
-                    this._currentSubprocess.force_exit();
-                } catch (e) {}
-                this._currentSubprocess = null;
+        /**
+         * Cancels any in-flight subnet-scan HTTP requests (used on sleep/lock
+         * so a sweep in progress doesn't keep hammering the network while
+         * suspended). The session itself remains reusable afterward.
+         */
+        _abortDiscovery() {
+            if (this._scanSoupSession) {
+                this._scanSoupSession.abort();
+            }
+            this._subnetScanActive = false;
+        }
+
+        /**
+         * Determines the local IPv4 address used for outbound traffic by
+         * asking the kernel to route a UDP "connection" to a reserved,
+         * never-routed address (192.0.2.1, RFC 5737 TEST-NET-1). No packets
+         * are actually sent — UDP connect() only resolves which local
+         * interface/address the routing table would use — so this is
+         * instant and needs no external tool (no avahi, no `ip` command,
+         * no NetworkManager dependency).
+         */
+        _getLocalIpAddress() {
+            let socket = null;
+            try {
+                socket = Gio.Socket.new(
+                    Gio.SocketFamily.IPV4,
+                    Gio.SocketType.DATAGRAM,
+                    Gio.SocketProtocol.UDP
+                );
+
+                const remote = Gio.InetSocketAddress.new(
+                    Gio.InetAddress.new_from_string('192.0.2.1'),
+                    80
+                );
+                socket.connect(remote, null);
+
+                const local = socket.get_local_address();
+                const address = local ? local.get_address().to_string() : null;
+
+                // 0.0.0.0 means the kernel couldn't resolve a route at all.
+                return address && address !== '0.0.0.0' ? address : null;
+            } catch (e) {
+                return null;
+            } finally {
+                if (socket) {
+                    try {
+                        socket.close();
+                    } catch (e) {
+                        // already closed / never opened — nothing to do
+                    }
+                }
             }
         }
 
         /**
-         * Runs an active 2.5-second scan to catch slower Wi-Fi/UDP mDNS responses.
+         * Entry point for (re)discovery. Finds the local subnet via
+         * _getLocalIpAddress() and sweeps it directly. No mDNS/avahi
+         * involved at all — nothing is spawned, so there's no external tool
+         * dependency and no risk of missing devices due to multicast being
+         * dropped on Wi-Fi/VLANs the way mDNS discovery can be.
          */
         _discoverShellyDevices() {
-            this._killCurrentDiscovery();
-
-            const cmd = ['avahi-browse', '-rp', '_http._tcp'];
-
-            try {
-                this._currentSubprocess = Gio.Subprocess.new(cmd, Gio.SubprocessFlags.STDOUT_PIPE);
-
-                // Spawn succeeded, so the binary exists — clear any prior "missing" state.
-                if (!this._avahiAvailable) {
-                    this._avahiAvailable = true;
-                    if (this._avahiWarningItem) {
-                        this._avahiWarningItem.visible = false;
-                    }
-                    this._updateDeviceMenu();
-                }
-
-                const scanTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2500, () => {
-                    this._killCurrentDiscovery();
-                    return GLib.SOURCE_REMOVE;
-                });
-
-                this._currentSubprocess.communicate_utf8_async(null, null, (proc, res) => {
-                    GLib.Source.remove(scanTimeoutId);
-
-                    try {
-                        let [, stdout] = proc.communicate_utf8_finish(res);
-                        if (stdout) {
-                            this._parseAvahiOutput(stdout);
-                        }
-                    } catch (e) {
-                        // Suppress manually triggered exit code error messages
-                    } finally {
-                        this._currentSubprocess = null;
-                    }
-                });
-            } catch (e) {
-                console.error(`Failed to launch avahi-browse: ${e.message}`);
-                this._handleAvahiMissing(e);
-            }
-        }
-
-        /**
-         * Called when avahi-browse can't be spawned at all (most likely it
-         * isn't installed, occasionally a permissions issue). Any failure to
-         * spawn this specific, fixed argv is realistically one of those two
-         * causes. Shows a persistent warning in the main menu instead of
-         * silently falling back to a generic "no devices found" state.
-         */
-        _handleAvahiMissing(error) {
-            this._avahiAvailable = false;
             this._discoveredDevices = [];
 
-            if (this._avahiWarningItem) {
-                this._avahiWarningItem.visible = true;
-            }
+            const localIp = this._getLocalIpAddress();
 
-            this._updateDeviceMenu();
-        }
-
-        /**
-         * Parses output and targets Shelly HTTP metadata.
-         * Filters to include only devices explicitly set to 'cover' profile.
-         */
-        _parseAvahiOutput(stdout) {
-            const lines = stdout.split('\n');
-            const foundIps = [];
-
-            for (let line of lines) {
-                const parts = line.split(';');
-                if (parts[0] === '=' && parts[2] === 'IPv4') {
-                    const name = parts[3];
-                    const ip = parts[7];
-
-                    if (name && ip && name.toLowerCase().includes('shelly')) {
-                        if (!foundIps.includes(ip)) {
-                            foundIps.push(ip);
-                        }
-                    }
+            if (!localIp) {
+                this._networkAvailable = false;
+                if (this._networkWarningItem) {
+                    this._networkWarningItem.visible = true;
                 }
-            }
-
-            this._discoveredDevices = [];
-
-            if (foundIps.length === 0) {
                 this._updateDeviceMenu();
                 return;
             }
 
-            foundIps.forEach(ip => {
-                const url = `http://${ip}/rpc/Shelly.GetDeviceInfo`;
-                const message = Soup.Message.new('GET', url);
+            if (!this._networkAvailable) {
+                this._networkAvailable = true;
+                if (this._networkWarningItem) {
+                    this._networkWarningItem.visible = false;
+                }
+            }
 
-                this._soupSession.send_and_read_async(
-                    message,
-                    GLib.PRIORITY_DEFAULT,
-                    null,
-                    (session, result) => {
-                        try {
-                            const responseBytes = session.send_and_read_finish(result);
-                            if (message.get_status() === 200) {
-                                const decoder = new TextDecoder('utf-8');
-                                const responseText = decoder.decode(responseBytes.get_data());
-                                const deviceInfo = JSON.parse(responseText);
+            this._scanSubnetForDevices(localIp, [localIp]);
+        }
 
-                                // COVER FILTER LOGIC
-                                const isCoverProfile = deviceInfo.profile === 'cover';
-                                const appName = deviceInfo.app || '';
-                                const isCompatibleHardware = appName.includes('2PM') || appName.toLowerCase().includes('cover');
+        /**
+         * Applies the cover/2PM compatibility filter to a Shelly.GetDeviceInfo
+         * response and adds the device to the roster if it matches.
+         */
+        _registerDiscoveredDevice(ip, deviceInfo) {
+            const isCoverProfile = deviceInfo.profile === 'cover';
+            const appName = deviceInfo.app || '';
+            const isCompatibleHardware = appName.includes('2PM') || appName.toLowerCase().includes('cover');
 
-                                if (isCoverProfile || (isCompatibleHardware && deviceInfo.profile !== 'switch')) {
-                                    const displayName = deviceInfo.name || deviceInfo.id;
+            if (isCoverProfile || (isCompatibleHardware && deviceInfo.profile !== 'switch')) {
+                const displayName = deviceInfo.name || deviceInfo.id;
 
-                                    if (!this._discoveredDevices.some(d => d.ip === ip)) {
-                                        this._discoveredDevices.push({ name: displayName, ip });
-                                        this._updateDeviceMenu();
-                                    }
-                                }
-                            }
-                        } catch (error) {
-                            // Suppressed transient verification errors to adhere to EGO-A-004 guidelines
-                        }
-                    }
-                );
+                if (!this._discoveredDevices.some(d => d.ip === ip)) {
+                    this._discoveredDevices.push({ name: displayName, ip });
+                    this._updateDeviceMenu();
+                }
+            }
+        }
+
+        /**
+         * Fetches Shelly.GetDeviceInfo from a single IP and registers it if
+         * it matches. onComplete always fires exactly once (success,
+         * non-match, timeout, or network error) so callers can track when a
+         * batch of probes is done.
+         */
+        _probeShellyDevice(ip, onComplete) {
+            const url = `http://${ip}/rpc/Shelly.GetDeviceInfo`;
+            const message = Soup.Message.new('GET', url);
+            const cancellable = new Gio.Cancellable();
+
+            // Fast timeout so a full /24 sweep finishes quickly even though
+            // most of the 254 addresses won't have anything listening.
+            const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 700, () => {
+                cancellable.cancel();
+                return GLib.SOURCE_REMOVE;
             });
+
+            this._scanSoupSession.send_and_read_async(
+                message,
+                GLib.PRIORITY_DEFAULT,
+                cancellable,
+                (session, result) => {
+                    GLib.Source.remove(timeoutId);
+
+                    try {
+                        const responseBytes = session.send_and_read_finish(result);
+                        if (message.get_status() === 200) {
+                            const decoder = new TextDecoder('utf-8');
+                            const responseText = decoder.decode(responseBytes.get_data());
+                            const deviceInfo = JSON.parse(responseText);
+                            this._registerDiscoveredDevice(ip, deviceInfo);
+                        }
+                    } catch (error) {
+                        // Expected for the vast majority of scanned addresses
+                        // (nothing listening, connection refused, timed out,
+                        // or not a Shelly at all) — nothing to do.
+                    } finally {
+                        onComplete();
+                    }
+                }
+            );
+        }
+
+        /**
+         * Sweeps every host in the /24 that anchorIp belongs to, skipping any
+         * IPs in excludeIps (typically the local machine's own address).
+         */
+        _scanSubnetForDevices(anchorIp, excludeIps = []) {
+            const octets = anchorIp.split('.');
+            if (octets.length !== 4) return;
+
+            const prefix = `${octets[0]}.${octets[1]}.${octets[2]}`;
+            const excludeSet = new Set(excludeIps);
+
+            let pending = 0;
+            this._subnetScanActive = true;
+            this._updateDeviceMenu();
+
+            const finishOne = () => {
+                pending--;
+                if (pending === 0) {
+                    this._subnetScanActive = false;
+                    this._updateDeviceMenu();
+                }
+            };
+
+            for (let i = 1; i <= 254; i++) {
+                const ip = `${prefix}.${i}`;
+                if (excludeSet.has(ip)) continue;
+
+                pending++;
+                this._probeShellyDevice(ip, finishOne);
+            }
+
+            // Nothing to scan (shouldn't normally happen with a /24)
+            if (pending === 0) {
+                this._subnetScanActive = false;
+                this._updateDeviceMenu();
+            }
         }
 
         /**
@@ -519,7 +576,15 @@ const ShellyIndicator = Object.registerClass(
         _updateDeviceMenu() {
             this._deviceSubMenu.removeAll();
 
-            if (!this._avahiAvailable) {
+            if (this._subnetScanActive) {
+                const scanningItem = new PopupMenu.PopupMenuItem('🔍 Scanning local network for devices…');
+                scanningItem.reactive = false;
+                scanningItem.can_focus = false;
+                scanningItem.label.add_style_class_name('shelly-menu-info-label');
+                this._deviceSubMenu.addMenuItem(scanningItem);
+            }
+
+            if (!this._networkAvailable) {
                 this._setWebUiButtonSensitive(false);
             } else if (this._discoveredDevices.length > 0) {
                 // 1. Populate actual found Shellys
@@ -698,8 +763,8 @@ const ShellyIndicator = Object.registerClass(
                 this._feedbackTimeoutId = null;
             }
 
-            // Clean up spawned subprocesses
-            this._killCurrentDiscovery();
+            // Cancel any in-flight subnet-scan HTTP requests
+            this._abortDiscovery();
 
             // Disconnect and clean up DBus Session listeners
             if (this._screenSaverProxy && this._screenSaverSignalId) {
@@ -712,6 +777,10 @@ const ShellyIndicator = Object.registerClass(
             if (this._soupSession) {
                 this._soupSession.abort();
                 this._soupSession = null;
+            }
+            if (this._scanSoupSession) {
+                this._scanSoupSession.abort();
+                this._scanSoupSession = null;
             }
 
             super.destroy();

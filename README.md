@@ -2,7 +2,7 @@
 
 A native, lightweight GNOME Shell extension that puts your local Shelly Cover devices (like the Shelly Plus 2PM or Pro 2PM) right in your top panel.
 
-It operates entirely locally over your network using the Shelly HTTP RPC API and mDNS—no cloud accounts or internet connection required.
+It operates entirely locally over your network using the Shelly HTTP RPC API — no cloud accounts and no internet connection required.
 
 ## ✨ Features
 
@@ -11,7 +11,7 @@ It operates entirely locally over your network using the Shelly HTTP RPC API and
 * **Real-Time Status:** Shows the exact position of your cover right in the top bar (e.g., `🪟 45%`).
 * **Live Movement Indicators:** Displays directional arrows (`▲` / `▼`) while your blinds or shutters are actively moving.
 * **One-Row Controls:** The dropdown's top row puts everything at your fingertips: `Name [▲] [▼] [■] 40% [🌐]` — open, close, stop, live percentage, and a quick web-UI shortcut, all without closing the menu between clicks.
-* **Zero-Config Discovery:** Automatically finds Shelly devices on your local Wi-Fi/LAN using mDNS.
+* **Zero-Config Discovery:** Automatically finds Shelly devices on your local network — no configuration, no mDNS, no external tools. The extension detects your machine's local IP (via a routing-table lookup, no packets sent) and directly probes every address in that subnet for Shelly devices, so it isn't affected by multicast getting dropped on Wi-Fi/VLANs the way mDNS-based discovery can be.
 * **Smart Filtering:** Extracts your custom Shelly device names (e.g., *"Wohnzimmer Rolladen"*) and ignores Shelly relays configured as standard light switches.
 * **Persistent Memory:** Remembers your selected device across system reboots.
 * **Sleep Aware:** Safely pauses background network polling when your Linux machine goes to sleep and auto-heals connections when waking up.
@@ -19,24 +19,9 @@ It operates entirely locally over your network using the Shelly HTTP RPC API and
 * **About Dialog:** An "ℹ️ About" entry at the bottom of the menu shows the extension's name, version, GitHub page, and donation links.
 
 
-## 🛠 Prerequisites
+## 🧩 Dependencies
 
-This extension relies on standard Linux Avahi tools for local network mDNS discovery. You must have this package installed on your system:
-
-**Ubuntu / Debian / Linux Mint:**
-```bash
-sudo apt install avahi-utils
-```
-
-**Fedora:**
-```bash
-sudo dnf install avahi-tools
-```
-
-**Arch Linux:**
-```bash
-sudo pacman -S avahi
-```
+None to install. Every library the extension uses (`GLib`, `GObject`, `Gio`, `Clutter`, `St`, `Soup` 3.0) ships as part of GNOME Shell / GJS itself on any of the supported versions (45–50) — nothing extra to `apt install`, `dnf install`, or `pacman -S`.
 
 ## 📦 Installation (Manual)
 
@@ -61,6 +46,16 @@ sudo pacman -S avahi
    * **X11:** Press `Alt + F2`, type `r`, and press `Enter`.
    * **Wayland:** (Already taken care of in step 2, but required again if the extension ever needs a hard reload after code changes).
 
+## 🧪 Testing Changes
+
+On Wayland, GNOME Shell can't be restarted in-place (that's why step 4 above requires a full logout), which makes iterating on the code slow. A much faster loop is to run a **nested** GNOME Shell session instead:
+
+```bash
+dbus-run-session gnome-shell --nested --wayland
+```
+
+This opens GNOME Shell inside a window on your existing desktop, picking up the extension from your usual `~/.local/share/gnome-shell/extensions/` symlink. Close the window and rerun the command to reload after making changes — no logout required.
+
 ## ⚙️ Compatibility
 
 * **GNOME Shell:** 45, 46, 47, 48, 49, 50 (ESM imports)
@@ -75,9 +70,9 @@ This extension is free and open-source software. If you find it useful and would
 
 ## 🐛 Troubleshooting
 
-* **Empty Dropdown Menu:** Ensure your computer and your Shelly are on the same local subnet. Wait a few seconds and click "Refresh Device List".
-* **"⚠️ avahi-browse unavailable" in the menu:** The extension couldn't run `avahi-browse` — almost always because it isn't installed (see [Prerequisites](#-prerequisites) above). Install the package for your distro, then click "🔄 Refresh Device List" inside the "Select Shelly Device" submenu; the warning clears automatically once discovery succeeds, no restart needed.
-* **Menu says "Err" or "Off":** The selected device may have lost Wi-Fi connection or changed IPs. Refresh the device list to update the mDNS cache.
+* **Empty Dropdown Menu:** Ensure your computer and your Shelly are on the same local subnet. The initial scan sweeps the whole subnet and takes about a second — wait a moment and click "🔄 Refresh Device List" if nothing shows up yet.
+* **"⚠️ No local network connection found" in the menu:** The extension couldn't determine a local IP address to scan from, which usually means Wi-Fi/Ethernet is disconnected or no network interface is up. Reconnect, then click "🔄 Refresh Device List" inside the "Select Shelly Device" submenu; the warning clears automatically once a route is found, no restart needed.
+* **Menu says "Err" or "Off":** The selected device may have lost Wi-Fi connection or changed IPs. Refresh the device list to rescan the subnet.
 * **Can't see the extension:** Double-check that your symlink inside `~/.local/share/gnome-shell/extensions/` is named exactly `shelly-cover-control@firebirdberlin` and points to the correct project folder.
 
 ## ⚖️ License
