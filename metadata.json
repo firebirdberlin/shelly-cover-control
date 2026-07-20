@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "url": "https://github.com/firebirdberlin/shelly-cover-control",
   "description": "Control your Shelly 2PM cover directly from the top panel.",
   "name": "Shelly Cover Control",
